@@ -527,7 +527,23 @@ onSnapshot(collection(db, "trees"), (snapshot) => {
             "Some trees keep a chemical memory of environmental stress, passing down resilience to their saplings so the next generation grows stronger.",
             "Neighborhoods with strong tree canopies are significantly cooler in the summer, creating safe, shared sanctuaries.",
             "Spending time around trees is scientifically proven to lower cortisol levels and reduce stress. We don't just grow the forest; it heals us back.",
-            "A single mature tree can absorb up to 48 pounds of carbon dioxide per year, breathing fresh life into our shared ecosystem."
+            "A single mature tree can absorb up to 48 pounds of carbon dioxide per year, breathing fresh life into our shared ecosystem.",
+            "Many forests exhibit a beautiful phenomenon called 'crown shyness.' Trees will naturally stop growing right before their leaves touch their neighbors, creating puzzle-piece canopies so everyone gets to share the sunlight.",
+            "The biggest, oldest trees in a forest act as 'hub trees.' Like a caring parent, they use underground networks to pump extra sugar and water directly to the smallest, most vulnerable saplings around them.",
+            "Trees actually have a heartbeat. Every few hours, their branches gently pulse up and down, pumping water from their deep roots all the way up to their leaves in a slow, silent rhythm.",
+            "When a tree is attacked by insects, it releases protective scent signals into the wind to warn its neighbors. The surrounding trees smell it and immediately boost their own immune defenses.",
+            "In a true forest community, nobody gets left behind. Healthy trees have been known to keep the stumps of fallen neighbors alive for decades by continuously sharing nutrients through their intertwined roots.",
+            "A single mature oak tree isn't just a plant; it's a sanctuary. It can provide a home for over 500 different species of life, creating an entire bustling metropolis within its branches.",
+            "Trees are social creatures. Those growing in tight-knit forests live significantly longer than solitary trees.",
+            "Just two mature trees can provide enough oxygen to support a family of four for an entire year.",
+            "A single large oak tree can drink up to 100 gallons of water a day, breathing it back into the air as a cooling mist.",
+            "Forests are the earth's greatest sanctuaries, providing a safe home to more than 80% of all land-based life.",
+            "A slow conversation: electrical signals travel through a tree's roots at a gentle pace of about one-third of an inch per second.",
+            "Underground networks allow tree roots to stretch two to three times wider than their branches, physically holding the earth together.",
+            "Spending just 15 minutes surrounded by trees is scientifically proven to lower blood pressure and ease anxiety.",
+            "A single birch tree can scatter over a million tiny seeds in one year, endlessly hoping to start a new forest.",
+            "Some living trees have been growing for over 5,000 years, silently bearing witness to the entirety of recorded human history.",
+            "City trees placed near buildings can reduce air conditioning needs by up to 30%, sheltering us on the hottest days."
         ];
 
         // UI Options
@@ -799,12 +815,9 @@ document.getElementById('finish-build-btn').onclick = async () => {
             timestamp: new Date()
         });
         sessionTreesPlanted++;
-        if (sessionTreesPlanted % 2 === 0) {
-            // Wait just a brief moment for the tree to visually appear before showing the popup
-            setTimeout(() => {
-                triggerFactPopup();
-            }, 800); 
-        }
+        setTimeout(() => {
+            triggerFactPopup();
+        }, 800);
 
     } catch (e) {
         console.error("Error adding document: ", e);
