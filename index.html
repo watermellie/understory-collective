@@ -15,7 +15,7 @@
     </script>
 
     <style>
-        /* Sleek Modern UI Overhaul */
+       /* Sleek Modern UI Overhaul */
         :root {
             --bg-blur: rgba(255, 255, 255, 0.75);
             --text-main: #1a1a1a;
@@ -70,7 +70,6 @@
             background: var(--accent); color: #fff; 
             box-shadow: 0 6px 20px rgba(0,0,0,0.15); transform: translateY(-2px);
         }
-
         /* Tree Preview Window */
         #tree-preview-container { 
             width: 240px; height: 240px; margin-bottom: 25px; 
@@ -291,6 +290,72 @@
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        // Import Firebase (you likely already have this part!)
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+// PASTE YOUR COPIED CONFIG HERE:
+const firebaseConfig = {
+  apiKey: "AIzaSyCNShycSSautpMahoHyNiMtdfxgsdCS0uA",
+  authDomain: "ctc-final.firebaseapp.com",
+  projectId: "ctc-final",
+  storageBucket: "ctc-final.firebasestorage.app",
+  messagingSenderId: "1079840116193",
+  appId: "1:1079840116193:web:7413cfbbd82c74ad3016a0",
+  measurementId: "G-W959ZHCZR8"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// --- FIREBASE: LISTEN FOR TREES ---
+onSnapshot(collection(db, "trees"), (snapshot) => {
+    // Clear existing trees first so we don't duplicate them when the database updates
+    plantedTrees.forEach(tree => scene.remove(tree));
+    plantedTrees.length = 0;
+
+    snapshot.forEach((doc) => {
+        const data = doc.data();
+        
+        // Load the tree based on the database style index
+        loader.load(`assets/tree${data.styleIndex}.glb`, (gltf) => {
+            const tree = gltf.scene;
+            
+            tree.traverse(child => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.material = child.material.clone();
+                    if (child.name.toLowerCase().includes("leaf") || child.material.name.toLowerCase().includes("leaf")) {
+                        child.material.color.setHex(colors[data.colorIndex].hex);
+                    }
+                }
+            });
+            
+            // Set position and rotation from database coordinates
+            tree.position.set(data.x, data.y, data.z);
+            const normal = new THREE.Vector3(data.nx, data.ny, data.nz);
+            tree.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), normal);
+            
+            // Set scale
+            const finalTreeScale = 0.2 * scaleOptions[data.treeScaleIndex].val;
+            tree.scale.set(finalTreeScale, finalTreeScale, finalTreeScale); 
+            
+            // Add user data for the popup UI
+            tree.userData = {
+                user: data.user,
+                note: data.note,
+                styleName: treeNames[data.styleIndex - 1],
+                colorName: colors[data.colorIndex].name
+            };
+
+            scene.add(tree);
+            plantedTrees.push(tree); 
+        });
+    });
+});
+
+// Your tree-planting code runs below this...
 
         // --- MAIN SCENE SETUP ---
         const scene = new THREE.Scene();
@@ -599,43 +664,36 @@
             }
         };
 
-        document.getElementById('finish-build-btn').onclick = () => {
-            loader.load(`assets/tree${styleIndex}.glb`, (gltf) => {
-                const tree = gltf.scene;
-                tree.traverse(child => {
-                    if (child.isMesh) {
-                        child.castShadow = true; // Enable shadow casting
-                        child.material = child.material.clone();
-                        if (child.name.toLowerCase().includes("leaf") || child.material.name.toLowerCase().includes("leaf")) {
-                            child.material.color.setHex(colors[colorIndex].hex);
-                        }
-                    }
-                });
-                
-                tree.position.copy(pendingHitPoint);
-                tree.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), pendingHitNormal);
-                
-                const finalTreeScale = 0.2 * scaleOptions[treeScaleIndex].val;
-                tree.scale.set(finalTreeScale, finalTreeScale, finalTreeScale); 
-                
-                tree.userData = {
-                    user: currentUser,
-                    note: document.getElementById('tree-memory-input').value || "Grew quietly.",
-                    styleName: treeNames[styleIndex - 1],
-                    colorName: colors[colorIndex].name,
-                    baseScale: finalTreeScale,
-                    targetScale: finalTreeScale 
-                };
+// --- FIREBASE: SAVE A NEW TREE ---
+document.getElementById('finish-build-btn').onclick = async () => {
+    // 1. Hide the UI immediately so it feels fast for the user
+    document.getElementById('builder-overlay').classList.add('hidden');
+    setTimeout(() => document.getElementById('builder-overlay').style.display = 'none', 600);
+    document.getElementById('plant-mode-btn').click();
 
-                scene.add(tree);
-                plantedTrees.push(tree); 
-                
-                document.getElementById('builder-overlay').classList.add('hidden');
-                setTimeout(() => document.getElementById('builder-overlay').style.display = 'none', 600);
-                document.getElementById('plant-mode-btn').click();
-                document.getElementById('tree-memory-input').value = '';
-            });
-        };
+    // 2. Send the tree data to Firebase
+    try {
+        await addDoc(collection(db, "trees"), {
+            user: currentUser,
+            note: document.getElementById('tree-memory-input').value || "Grew quietly.",
+            styleIndex: styleIndex,
+            colorIndex: colorIndex,
+            treeScaleIndex: treeScaleIndex,
+            x: pendingHitPoint.x,
+            y: pendingHitPoint.y,
+            z: pendingHitPoint.z,
+            nx: pendingHitNormal.x,
+            ny: pendingHitNormal.y,
+            nz: pendingHitNormal.z,
+            timestamp: new Date()
+        });
+    } catch (e) {
+        console.error("Error adding document: ", e);
+    }
+
+    // 3. Clear the input for next time
+    document.getElementById('tree-memory-input').value = '';
+};
 
         document.getElementById('cancel-build-btn').onclick = () => {
             document.getElementById('builder-overlay').classList.add('hidden');
