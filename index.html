@@ -212,17 +212,19 @@
         .plant-text-btn:hover { border-bottom: 1px solid currentColor; }
 
         /* Time Slider (Top Center) */
-        .top-center-ui { 
-            position: absolute; top: 40px; left: 50%; transform: translateX(-50%); 
-            z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 8px;
+        .top-center-ui {
+            position: absolute; right: 36px; top: 50%; transform: translateY(-50%);
+            z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 14px;
         }
         .slider-label {
-            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; color: var(--text-muted);
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 2px; color: var(--text-muted);
+            writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
         }
         .time-slider {
-            -webkit-appearance: none; 
+            -webkit-appearance: none;
             appearance: none; /* Added for standard compatibility */
-            width: 200px; height: 4px; background: rgba(0,0,0,0.1); 
+            writing-mode: vertical-lr; direction: rtl; /* vertical slider; "now" at the top */
+            width: 4px; height: 260px; background: rgba(0,0,0,0.1);
             border-radius: 2px; outline: none; transition: 0.2s;
         }
         .time-slider::-webkit-slider-thumb {
@@ -423,8 +425,8 @@
             .top-left-ui, .top-right-ui { top: 16px; right: 16px; left: auto; }
             .top-left-ui { left: 16px; right: auto; }
             .bottom-left-ui { bottom: 16px; left: 16px; gap: 8px; }
-            .top-center-ui { top: 12px; }
-            .time-slider { width: 140px; }
+            .top-center-ui { right: 14px; top: 50%; }
+            .time-slider { height: 180px; }
             .top-right-ui { gap: 4px; }
             .top-right-ui .ui-btn { padding: 8px 14px; font-size: 0.82rem; }
             .user-display { font-size: 0.9rem; }
@@ -1295,17 +1297,19 @@ const db = getFirestore(app);
 // --- TIME SLIDER LOGIC ---
         const timeSlider = document.getElementById('time-slider');
         let timeSliderValue = 100; // 100 = now (live); lower rewinds through the planting timeline
-        let timeDirection = 1; // (unused now the slider is a history scrubber)
+        let timeDirection = -1; // auto-scrub direction (ping-pongs between 0 and 100)
         let isUserDraggingTime = false;
+        let lastTimeInteraction = 0; // timestamp of last user touch; auto-scrub resumes after the delay
+        const AUTO_SCRUB_DELAY = 5000; // hold the user's position for 5s before auto-scrubbing again
         const TIME_SPEED = 0.05; // How fast the sun sets/rises (lower is slower)
 
         // Pause auto-rotation when user clicks/drags the slider
-        timeSlider.addEventListener('mousedown', () => isUserDraggingTime = true);
-        timeSlider.addEventListener('touchstart', () => isUserDraggingTime = true);
-        
-        // Resume auto-rotation when user lets go
-        window.addEventListener('mouseup', () => isUserDraggingTime = false);
-        window.addEventListener('touchend', () => isUserDraggingTime = false);
+        timeSlider.addEventListener('mousedown', () => { isUserDraggingTime = true; lastTimeInteraction = performance.now(); });
+        timeSlider.addEventListener('touchstart', () => { isUserDraggingTime = true; lastTimeInteraction = performance.now(); });
+
+        // After releasing, hold their position for AUTO_SCRUB_DELAY, then auto-scrub resumes
+        window.addEventListener('mouseup', () => { isUserDraggingTime = false; lastTimeInteraction = performance.now(); });
+        window.addEventListener('touchend', () => { isUserDraggingTime = false; lastTimeInteraction = performance.now(); });
 
         // The master function that updates the environment colors
         function updateEnvironment(val) {
@@ -1355,6 +1359,7 @@ const db = getFirestore(app);
         // When the user drags it manually, update the value
         timeSlider.addEventListener('input', (e) => {
             timeSliderValue = parseFloat(e.target.value);
+            lastTimeInteraction = performance.now();
             // lighting + every tree's size are recomputed from this cursor each frame in animate()
         });
 
@@ -1706,6 +1711,14 @@ document.getElementById('leave-flower-btn').onclick = () => {
             // slider 100 = now (live, all trees planted); drag left to rewind through plant events.
             // Fade is RELATIVE to activity: the newest KEEP_RECENT trees always stay; older ones
             // fade only as newer trees arrive. Growth is real-time so new plants still sprout.
+            // Auto-scrub the history when idle; paused for AUTO_SCRUB_DELAY after the user interacts
+            if (!isUserDraggingTime && performance.now() - lastTimeInteraction > AUTO_SCRUB_DELAY) {
+                timeSliderValue += timeDirection * TIME_SPEED;
+                if (timeSliderValue >= 100) { timeSliderValue = 100; timeDirection = -1; }
+                else if (timeSliderValue <= 0) { timeSliderValue = 0; timeDirection = 1; }
+                timeSlider.value = timeSliderValue;
+            }
+
             updateEnvironment(100 - timeSliderValue); // lighting tied to the scrubber
 
             const ordered = plantedTrees.slice().sort((a, b) =>

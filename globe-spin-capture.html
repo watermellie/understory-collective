@@ -93,6 +93,7 @@
       <div class="field">
         <div class="checkrow"><input type="checkbox" id="shadows" checked /> <label for="shadows" style="margin:0; text-transform:none; letter-spacing:0; color:var(--ink); font-size:0.85rem;">Tree shadows (cast on globe)</label></div>
         <div class="checkrow" style="margin-top:8px;"><input type="checkbox" id="dof" checked /> <label for="dof" style="margin:0; text-transform:none; letter-spacing:0; color:var(--ink); font-size:0.85rem;">Depth-of-field focus blur</label></div>
+        <div class="checkrow" style="margin-top:8px;"><input type="checkbox" id="history" checked /> <label for="history" style="margin:0; text-transform:none; letter-spacing:0; color:var(--ink); font-size:0.85rem;">Animate planting history (grow in)</label></div>
       </div>
 
       <div class="field">
@@ -175,6 +176,7 @@ const dofAmountEl = document.getElementById('dof-amount');
 const dofAmountVal = document.getElementById('dof-amount-val');
 const gradientAmountEl = document.getElementById('gradient-amount');
 const gradientAmountVal = document.getElementById('gradient-amount-val');
+const historyEl = document.getElementById('history');
 const recordBtn = document.getElementById('record-btn');
 const statusEl = document.getElementById('status');
 const barFill = document.querySelector('#bar > div');
@@ -253,6 +255,8 @@ function parseGLB(b64) {
 
 const flowerTemplates = new Map();
 let treeTemplates = {};
+const plantedTreeRoots = [];   // all tree roots, in load order
+let treesSorted = [];          // tree roots sorted by plant time, for the grow-in animation
 
 function getFlowerInstance(typeIndex = 1) {
   const tpl = flowerTemplates.get(typeIndex) || flowerTemplates.get(1);
@@ -281,6 +285,50 @@ function addFlowerToTree(treeRoot, flowerData = {}, index = 0, total = 1) {
   treeRoot.add(flower);
 }
 
+// ---- Grow-in "history" animation (mirrors the app's relative-fade model) ----
+const KEEP_RECENT = 40;     // newest N trees stay full
+const FADE_SPAN = 12;       // older trees fade across the next N plantings, then hide
+const GROW = 2.5;           // a tree sprouts to full over this many "plantings" as the cursor passes
+const HISTORY_BUILD = 0.78; // history finishes building by this fraction of the recording, then holds
+const PREVIEW_CYCLE = 14;   // seconds for the preview build-and-hold loop
+function fadeFactor(rank) {
+  if (rank < KEEP_RECENT) return 1;
+  if (rank < KEEP_RECENT + FADE_SPAN) return 1 - (rank - KEEP_RECENT) / FADE_SPAN;
+  return 0;
+}
+function sweepScale(localAge) {
+  if (localAge <= 0) return 0;
+  const grow = localAge < GROW ? (0.3 + 0.7 * (localAge / GROW)) : 1;
+  return grow * fadeFactor(localAge - 1);
+}
+function updateForest() {
+  const total = treesSorted.length;
+  if (!total) return;
+  if (!historyEl.checked) {                       // static: full forest
+    for (let i = 0; i < total; i++) {
+      const tr = treesSorted[i];
+      tr.visible = true;
+      if (tr.userData.inner) tr.userData.inner.scale.setScalar(tr.userData.fullScale || 0.2);
+    }
+    return;
+  }
+  // history grow-in: a cursor sweeps the planting timeline (overshoots so the newest reaches full)
+  let frac;
+  if (recording) {
+    frac = Math.min(1, ((performance.now() - recStart) / recDurationMs) / HISTORY_BUILD);
+  } else {
+    const phase = (performance.now() / 1000 % PREVIEW_CYCLE) / PREVIEW_CYCLE;
+    frac = Math.min(1, phase / 0.72);
+  }
+  const cursorIndex = frac * (total + GROW + 2);
+  for (let i = 0; i < total; i++) {
+    const tr = treesSorted[i];
+    const lc = sweepScale(cursorIndex - i);
+    tr.visible = lc > 0.002;
+    if (tr.userData.inner) tr.userData.inner.scale.setScalar((tr.userData.fullScale || 0.2) * lc);
+  }
+}
+
 function buildTree(data) {
   const tpl = treeTemplates['tree' + data.styleIndex] || treeTemplates['tree1'];
   const tree = tpl.clone(true);
@@ -305,6 +353,8 @@ function buildTree(data) {
   const growth = getTreeGrowthMultiplier(getAgeDays(data.timestamp));
   const innerScale = fullTreeScale * growth;
   treeRoot.userData.fullScale = fullTreeScale;
+  treeRoot.userData.plantedMs = Date.parse(data.timestamp) || 0;
+  treeRoot.userData.inner = tree;
   tree.scale.setScalar(innerScale);
   treeRoot.add(tree);
 
@@ -334,9 +384,12 @@ async function init() {
     let planted = 0;
     for (const data of TREE_DATA) {
       if (data.x == null || data.nx == null || data.styleIndex == null) continue;
-      spinGroup.add(buildTree(data));
+      const tr = buildTree(data);
+      spinGroup.add(tr);
+      plantedTreeRoots.push(tr);
       planted++;
     }
+    treesSorted = plantedTreeRoots.slice().sort((a, b) => a.userData.plantedMs - b.userData.plantedMs);
 
     statusEl.textContent = `Ready — ${planted} trees planted. Click record to capture a loop.`;
     recordBtn.disabled = false;
@@ -395,6 +448,7 @@ function animate() {
   } else {
     spinGroup.rotation.y += clock.getDelta() * 0.12; // slow idle preview
   }
+  updateForest();
   renderFrame();
 }
 animate();
