@@ -505,8 +505,8 @@
                 <h3>How it works</h3>
                 <ul>
                     <li>Real-time multiplayer via Firebase Firestore.</li>
-                    <li>Trees grow with age: 30% on day 0, 60% on day 1, 100% from day 2.</li>
-                    <li>Day, sunset, and night auto-cycle on a slider.</li>
+                    <li>Trees sprout and grow over ~2 days; as new ones are planted, the oldest gently fade — so the forest never gets cluttered.</li>
+                    <li>Scrub the “History of All Time” slider to rewind and watch the whole forest grow and fade.</li>
                     <li>Built with Three.js and WebGL.</li>
                     <li>Background music with mute.</li>
                 </ul>
@@ -581,8 +581,8 @@
 
 
     <div class="top-center-ui">
-        <div class="slider-label">Time of Day</div>
-<input type="range" id="time-slider" min="0" max="100" value="0" step="0.001" class="time-slider">    </div>
+        <div class="slider-label">History of All Time</div>
+<input type="range" id="time-slider" min="0" max="100" value="100" step="0.001" class="time-slider">    </div>
 
     <div class="bottom-left-ui">
         <div style="display: flex; gap: 8px;">
@@ -1043,6 +1043,25 @@ const db = getFirestore(app);
             return 1;
         }
 
+        // --- Tree lifecycle: real-time growth, RELATIVE (activity-based) fade ---
+        const DAY_MS = 86400000;
+        const GROW_DAYS = 2;        // a freshly planted tree sprouts to full size over this many real days
+        const KEEP_RECENT = 40;     // the most recently planted N trees always stay fully visible
+        const FADE_SPAN = 12;       // beyond that, trees fade out across the next N plantings, then hide
+        // Real-time growth (0.3 -> 1) over the first GROW_DAYS days; 0 before it exists.
+        function growthFactor(realAgeDays) {
+            if (realAgeDays < 0) return 0;
+            if (realAgeDays >= GROW_DAYS) return 1;
+            return 0.3 + 0.7 * (realAgeDays / GROW_DAYS);
+        }
+        // Relative fade by position in the planting timeline (rank 0 = most recently planted).
+        // Stays 1 for the newest KEEP_RECENT, then ramps to 0 across FADE_SPAN, then 0 (hidden).
+        function fadeFactor(rankFromNewest) {
+            if (rankFromNewest < KEEP_RECENT) return 1;
+            if (rankFromNewest < KEEP_RECENT + FADE_SPAN) return 1 - (rankFromNewest - KEEP_RECENT) / FADE_SPAN;
+            return 0;
+        }
+
         function getTreeSizeValue(index) {
             return scaleOptions[index]?.val ?? scaleOptions[1].val;
         }
@@ -1108,8 +1127,10 @@ const db = getFirestore(app);
             const growthMultiplier = getTreeGrowthMultiplier(ageDays);
             const currentScale = fullTreeScale * growthMultiplier;
             const flowers = Array.isArray(data.flowers) ? data.flowers : [];
+            const plantedMs = (data.timestamp && data.timestamp.toMillis) ? data.timestamp.toMillis() : Date.now();
             return {
                 docId: treeDocId,
+                plantedMs: plantedMs,
                 user: data.user,
                 note: data.note,
                 styleName: treeNames[data.styleIndex - 1],
@@ -1273,8 +1294,8 @@ const db = getFirestore(app);
         // --- TIME SLIDER LOGIC ---
 // --- TIME SLIDER LOGIC ---
         const timeSlider = document.getElementById('time-slider');
-        let timeSliderValue = 0;
-        let timeDirection = 1; // 1 goes towards night, -1 goes towards day
+        let timeSliderValue = 100; // 100 = now (live); lower rewinds through the planting timeline
+        let timeDirection = 1; // (unused now the slider is a history scrubber)
         let isUserDraggingTime = false;
         const TIME_SPEED = 0.05; // How fast the sun sets/rises (lower is slower)
 
@@ -1334,7 +1355,7 @@ const db = getFirestore(app);
         // When the user drags it manually, update the value
         timeSlider.addEventListener('input', (e) => {
             timeSliderValue = parseFloat(e.target.value);
-            updateEnvironment(timeSliderValue);
+            // lighting + every tree's size are recomputed from this cursor each frame in animate()
         });
 
         // --- ABOUT MODAL ---
@@ -1474,7 +1495,11 @@ document.getElementById('finish-build-btn').onclick = async () => {
             nx: pendingHitNormal.x,
             ny: pendingHitNormal.y,
             nz: pendingHitNormal.z,
-            timestamp: serverTimestamp()
+            timestamp: serverTimestamp(),
+            // Optional storage cleanup: enable a Firestore TTL policy on `expireAt` to auto-delete
+            // very old trees server-side. (Independent of the visual fade, which is activity-based.
+            // Trees are currently only HIDDEN, not deleted, so storage still grows.)
+            expireAt: new Date(Date.now() + 30 * DAY_MS)
         });
         treesToBloom.add(treeDocId);
         sessionTreesPlanted++;
@@ -1677,8 +1702,18 @@ document.getElementById('leave-flower-btn').onclick = () => {
             windIntensity += (windTarget - windIntensity) * 0.025;
             const windT = nowMs * 0.001;
 
-            // Smooth scale for planted trees (hover/bloom) + wind sway on inner mesh
-            plantedTrees.forEach(tree => {
+            // --- History scrubber: a cursor across the PLANTING TIMELINE (skips empty time) ---
+            // slider 100 = now (live, all trees planted); drag left to rewind through plant events.
+            // Fade is RELATIVE to activity: the newest KEEP_RECENT trees always stay; older ones
+            // fade only as newer trees arrive. Growth is real-time so new plants still sprout.
+            updateEnvironment(100 - timeSliderValue); // lighting tied to the scrubber
+
+            const ordered = plantedTrees.slice().sort((a, b) =>
+                (a.userData.plantedMs || 0) - (b.userData.plantedMs || 0));
+            const total = ordered.length;
+            const cursorIndex = (timeSliderValue / 100) * total; // live (100) -> all trees
+
+            ordered.forEach((tree, i) => {
                 if (tree.userData && tree.userData.targetScale) {
                     tree.scale.lerp(new THREE.Vector3(
                         tree.userData.targetScale,
@@ -1686,33 +1721,24 @@ document.getElementById('leave-flower-btn').onclick = () => {
                         tree.userData.targetScale
                     ), 0.1);
                 }
-                if (tree.userData?.windPhase != null) {
-                    const innerMesh = tree.children.find(c => !c.userData?.isFlower);
-                    if (innerMesh) {
-                        const phase = tree.userData.windPhase;
-                        innerMesh.rotation.x = Math.sin(windT * 2.1 + phase) * windIntensity * 0.06;
-                        innerMesh.rotation.z = Math.cos(windT * 1.7 + phase * 1.3) * windIntensity * 0.045;
-                    }
+                const innerMesh = tree.children.find(c => !c.userData?.isFlower);
+                if (!innerMesh) return;
+
+                let lc = 0;
+                if (i < cursorIndex) {                                   // already planted at the cursor
+                    const rank = cursorIndex - 1 - i;                    // 0 = most recent at the cursor
+                    const realAge = (Date.now() - (tree.userData.plantedMs || 0)) / DAY_MS;
+                    lc = growthFactor(realAge) * fadeFactor(rank);
+                }
+                tree.visible = lc > 0.002;                               // not-yet-planted / faded-out
+                const full = tree.userData.fullScale || 0.2;
+                innerMesh.scale.set(full * lc, full * lc, full * lc);
+                if (tree.userData.windPhase != null && lc > 0.002) {
+                    const phase = tree.userData.windPhase;
+                    innerMesh.rotation.x = Math.sin(windT * 2.1 + phase) * windIntensity * 0.06;
+                    innerMesh.rotation.z = Math.cos(windT * 1.7 + phase * 1.3) * windIntensity * 0.045;
                 }
             });
-
-            // --- NEW: AUTO TIME OF DAY ---
-            if (!isUserDraggingTime) {
-                timeSliderValue += timeDirection * TIME_SPEED;
-                
-                // Ping-pong back and forth between 0 and 100
-                if (timeSliderValue >= 100) {
-                    timeSliderValue = 100;
-                    timeDirection = -1; // Reverse to sunrise
-                } else if (timeSliderValue <= 0) {
-                    timeSliderValue = 0;
-                    timeDirection = 1; // Reverse to sunset
-                }
-                
-                // Update the visual UI slider and the 3D environment
-                timeSlider.value = timeSliderValue;
-                updateEnvironment(timeSliderValue);
-            }
 
             renderer.render(scene, camera);
             previewRenderer.render(previewScene, previewCamera);
